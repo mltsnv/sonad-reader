@@ -6,9 +6,8 @@ import {
   FileText,
   FolderUp,
   Loader2,
+  Plus,
   Search,
-  Sparkles,
-  Star,
   Trash2,
   Volume2,
   X,
@@ -41,9 +40,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onGoToGenerator,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [filter, setFilter] = useState<
-    'all' | 'books' | 'ai' | 'favorites' | 'bookmarks'
-  >('all');
+  const [filter, setFilter] = useState<'all' | 'books' | 'ai' | 'bookmarks'>(
+    'all',
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -102,7 +101,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       setUploadError(
         err instanceof Error
           ? err.message
-          : 'Не удалось прочитать файл книги. Проверьте формат (.epub, .fb2, .txt).',
+          : 'Не удалось прочитать файл (.epub, .fb2, .txt).',
       );
     } finally {
       setUploading(false);
@@ -117,7 +116,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     const title =
       pasteTitle.trim() ||
       cleanBody.split('\n')[0].slice(0, 60).trim() ||
-      'Свой текст на эстонском';
+      'Текст на эстонском';
 
     const parsed = parsePlainText(cleanBody, title, 'paste');
     const now = new Date().toISOString();
@@ -130,7 +129,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     const bookRecord: BookRecord = {
       id: bookId,
       title: parsed.title,
-      author: 'Вставленная статья / текст',
+      author: 'Статья / фрагмент',
       source: 'paste',
       totalChapters: parsed.chapters.length,
       totalParagraphs,
@@ -161,26 +160,30 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     onOpenBook(bookId);
   };
 
-  const handleToggleFavorite = async (
-    e: React.MouseEvent,
-    book: BookRecord,
-  ) => {
-    e.stopPropagation();
-    await db.books.update(book.id, { favorite: !book.favorite });
-  };
-
   const handleDeleteBook = async (
     e: React.MouseEvent,
     bookId: string,
     title: string,
   ) => {
     e.stopPropagation();
-    if (!window.confirm(`Удалить «${title}» из библиотеки?`)) return;
+    if (!window.confirm(`Удалить «${title}»?`)) return;
     await db.transaction('rw', db.books, db.chapters, async () => {
       await db.books.delete(bookId);
       await db.chapters.where('bookId').equals(bookId).delete();
     });
   };
+
+  const booksCount = books.filter(
+    (b) =>
+      b.source === 'epub' ||
+      b.source === 'fb2' ||
+      b.source === 'txt' ||
+      b.source === 'paste',
+  ).length;
+
+  const aiCount = books.filter(
+    (b) => b.source === 'ai' || b.source === 'starter',
+  ).length;
 
   const filteredBooks = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -195,8 +198,6 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           return false;
       } else if (filter === 'ai') {
         if (b.source !== 'ai' && b.source !== 'starter') return false;
-      } else if (filter === 'favorites') {
-        if (!b.favorite) return false;
       }
 
       if (!q) return true;
@@ -210,7 +211,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     });
   }, [books, filter, searchQuery]);
 
-  const sourceBadgeLabel = (src: BookRecord['source']) => {
+  const sourceLabel = (src: BookRecord['source']) => {
     switch (src) {
       case 'epub':
         return 'EPUB';
@@ -219,26 +220,20 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
       case 'txt':
         return 'TXT';
       case 'paste':
-        return 'Статья';
+        return 'ТЕКСТ';
       case 'ai':
-        return 'AI-рассказ';
       case 'starter':
-        return 'Билингва';
+        return 'AI';
     }
   };
 
-  const recentBook = books[0];
-
   return (
-    <div className="page-container">
-      {/* Page Header & Actions */}
-      <div className="page-heading-row">
+    <section>
+      <div className="page-heading">
         <div>
-          <span className="eyebrow">RAAMATUD · КНИЖНАЯ ПОЛКА И СТАТЬИ</span>
-          <h1 className="page-title">Библиотека</h1>
-          <p className="page-subtitle">
-            Читайте книги в стиле «Билингва», переводите абзацы и сохраняйте новые слова в Sõnad в одно касание
-          </p>
+          <h1>
+            Raamatud<span className="heading-dot">.</span>
+          </h1>
         </div>
 
         <div className="heading-actions">
@@ -252,7 +247,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
           <button
             type="button"
-            className="btn-hero-primary"
+            className="secondary"
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
           >
@@ -261,363 +256,278 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             ) : (
               <FolderUp size={17} />
             )}
-            <span>Загрузить книгу</span>
+            <span>Файл</span>
           </button>
 
           <button
             type="button"
-            className="btn-hero-secondary"
+            className="secondary"
             onClick={() => setShowPasteModal(true)}
           >
             <FileText size={17} />
-            <span>Вставить текст</span>
+            <span>Текст</span>
           </button>
 
           <button
             type="button"
-            className="btn-hero-accent"
+            className="primary"
             onClick={onGoToGenerator}
           >
-            <Sparkles size={17} />
-            <span>AI-рассказ</span>
+            <Plus size={17} />
+            <span>Рассказ</span>
           </button>
         </div>
       </div>
 
-      {uploadError && <div className="generator-error-banner">{uploadError}</div>}
+      {uploadError && <div className="error">{uploadError}</div>}
 
-      {/* Continue Reading Spotlight */}
-      {recentBook && (
-        <section
-          className="continue-reading-banner"
-          onClick={() => onOpenBook(recentBook.id)}
-        >
-          <div className="continue-reading-info">
-            <span className="continue-eyebrow">ПРОДОЛЖИТЬ ЧТЕНИЕ</span>
-            <h2>{recentBook.title}</h2>
-            {recentBook.titleRu && (
-              <p className="continue-title-ru">{recentBook.titleRu}</p>
-            )}
-            <div className="continue-meta">
-              {recentBook.level && (
-                <span className={`cefr-badge cefr-${recentBook.level.toLowerCase()}`}>
-                  {recentBook.level}
-                </span>
-              )}
-              <span>
-                {recentBook.totalChapters > 1
-                  ? `Глава ${recentBook.currentChapterIndex + 1} из ${recentBook.totalChapters}`
-                  : `${recentBook.totalParagraphs} абзацев`}
-              </span>
-              {recentBook.genre && <span>· {recentBook.genre}</span>}
-            </div>
-          </div>
-
-          <button type="button" className="btn-continue-cta">
-            <span>Читать дальше</span>
-            <ArrowRight size={17} />
-          </button>
-        </section>
-      )}
-
-      {/* Search & Filter Toolbar */}
-      <div className="vocab-toolbar">
-        <div className="vocab-search-box">
-          <Search size={17} />
-          <input
-            type="search"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Поиск по названию, автору, жанру или целевым словам..."
-          />
-        </div>
-
-        <div className="segmented-group">
+      <div className="dictionary-toolbar">
+        <div className="tabs" role="tablist" aria-label="Фильтр библиотеки">
           <button
             type="button"
-            className={filter === 'all' ? 'active' : ''}
+            className={filter === 'all' ? 'selected' : ''}
             onClick={() => setFilter('all')}
           >
-            Все ({books.length})
+            Все <span>{books.length}</span>
           </button>
           <button
             type="button"
-            className={filter === 'books' ? 'active' : ''}
+            className={filter === 'books' ? 'selected' : ''}
             onClick={() => setFilter('books')}
           >
-            Книги и статьи (
-            {
-              books.filter(
-                (b) =>
-                  b.source === 'epub' ||
-                  b.source === 'fb2' ||
-                  b.source === 'txt' ||
-                  b.source === 'paste',
-              ).length
-            }
-            )
+            Книги <span>{booksCount}</span>
           </button>
           <button
             type="button"
-            className={filter === 'ai' ? 'active' : ''}
+            className={filter === 'ai' ? 'selected' : ''}
             onClick={() => setFilter('ai')}
           >
-            AI-рассказы (
-            {books.filter((b) => b.source === 'ai' || b.source === 'starter').length}
-            )
+            Рассказы <span>{aiCount}</span>
           </button>
           <button
             type="button"
-            className={filter === 'favorites' ? 'active' : ''}
-            onClick={() => setFilter('favorites')}
-          >
-            ★ Избранное ({books.filter((b) => b.favorite).length})
-          </button>
-          <button
-            type="button"
-            className={filter === 'bookmarks' ? 'active' : ''}
+            className={filter === 'bookmarks' ? 'selected' : ''}
             onClick={() => setFilter('bookmarks')}
           >
-            Закладки ({bookmarks.length})
+            Закладки <span>{bookmarks.length}</span>
           </button>
         </div>
+
+        {filter !== 'bookmarks' && (
+          <label className="search">
+            <Search size={18} />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Найти книгу или слово"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setSearchQuery('')}
+                aria-label="Очистить поиск"
+              >
+                <X size={15} />
+              </button>
+            )}
+          </label>
+        )}
       </div>
 
-      {/* Bookshelf Grid or Bookmarks */}
       {filter === 'bookmarks' ? (
         bookmarks.length === 0 ? (
-          <div className="empty-library-box">
-            <Bookmark size={42} strokeWidth={1.5} />
-            <h3>Пока нет сохранённых закладок и цитат</h3>
-            <p>
-              Во время чтения книги или рассказа нажмите на значок закладки у любого абзаца, чтобы быстро вернуться к этому месту.
-            </p>
+          <div className="empty">
+            <div className="empty-icon">
+              <Bookmark size={28} />
+            </div>
+            <h2>Закладок пока нет</h2>
+            <p>Отмечайте абзацы во время чтения, чтобы сохранять цитаты.</p>
           </div>
         ) : (
-          <div className="bookmarks-list">
+          <div className="word-list">
             {bookmarks.map((bm) => (
-              <article key={bm.id} className="bookmark-card">
-                <div className="bookmark-card-top">
-                  <button
-                    type="button"
-                    className="bookmark-book-link"
-                    onClick={() =>
-                      onOpenBookAtChapter(bm.bookId, bm.chapterIndex)
-                    }
-                  >
-                    <BookOpen size={15} />
-                    <span>
-                      {bm.bookTitle} · Глава {bm.chapterIndex + 1}
-                    </span>
-                  </button>
-
-                  <div className="bookmark-actions">
-                    <button
-                      type="button"
-                      className="icon-btn-round"
-                      onClick={() => {
-                        if (!('speechSynthesis' in window)) return;
-                        window.speechSynthesis.cancel();
-                        const u = new SpeechSynthesisUtterance(bm.etText);
-                        u.lang = 'et-EE';
-                        u.rate = 0.92;
-                        window.speechSynthesis.speak(u);
-                      }}
-                      title="Озвучить цитату"
-                    >
-                      <Volume2 size={15} />
-                    </button>
-                    <button
-                      type="button"
-                      className="book-delete-btn"
-                      onClick={() => db.bookmarks.delete(bm.id)}
-                      title="Удалить закладку"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
-                </div>
-
-                <p
-                  className="bookmark-et-text"
+              <article key={bm.id} className="book-row">
+                <button
+                  type="button"
+                  className="book-row-open"
                   onClick={() =>
                     onOpenBookAtChapter(bm.bookId, bm.chapterIndex)
                   }
                 >
-                  «{bm.etText}»
-                </p>
-                {bm.ruText && <p className="bookmark-ru-text">{bm.ruText}</p>}
+                  <div className="book-row-main">
+                    <div className="book-row-eyebrow">
+                      <span>{bm.bookTitle}</span>
+                      <span>·</span>
+                      <span>Глава {bm.chapterIndex + 1}</span>
+                    </div>
+                    <strong lang="et">{bm.etText}</strong>
+                    {bm.ruText && <span>{bm.ruText}</span>}
+                  </div>
+                </button>
+
+                <div className="book-row-actions">
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => {
+                      if (!('speechSynthesis' in window)) return;
+                      window.speechSynthesis.cancel();
+                      const u = new SpeechSynthesisUtterance(bm.etText);
+                      u.lang = 'et-EE';
+                      u.rate = 0.92;
+                      window.speechSynthesis.speak(u);
+                    }}
+                    title="Озвучить"
+                  >
+                    <Volume2 size={17} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={() => db.bookmarks.delete(bm.id)}
+                    title="Удалить"
+                  >
+                    <Trash2 size={17} />
+                  </button>
+                </div>
               </article>
             ))}
           </div>
         )
       ) : filteredBooks.length === 0 ? (
-        <div className="empty-library-box">
-          <BookOpen size={42} strokeWidth={1.5} />
-          <h3>В этой категории пока нет книг</h3>
-          <p>
-            Загрузите книгу в формате <code>.epub</code>, <code>.fb2</code> или{' '}
-            <code>.txt</code>, вставьте текст статьи с ERR.ee или сгенерируйте рассказ по вашим словам из Sõnad.
-          </p>
+        <div className="empty">
+          <div className="empty-icon">
+            <BookOpen size={28} />
+          </div>
+          <h2>Список пуст</h2>
+          <p>Загрузите файл (.epub, .fb2, .txt) или создайте рассказ.</p>
         </div>
       ) : (
-        <div className="books-grid">
+        <div className="word-list">
           {filteredBooks.map((b) => (
-            <div
-              key={b.id}
-              className="book-card"
-              onClick={() => onOpenBook(b.id)}
-            >
-              <div
-                className="book-spine-accent"
-                style={{ backgroundColor: b.coverColor || '#1e293b' }}
-              />
-              <div className="book-card-body">
-                <div className="book-card-top">
-                  <div className="book-badges">
-                    <span className={`source-badge source-${b.source}`}>
-                      {sourceBadgeLabel(b.source)}
-                    </span>
+            <article key={b.id} className="book-row">
+              <button
+                type="button"
+                className="book-row-open"
+                onClick={() => onOpenBook(b.id)}
+              >
+                <div className="book-row-main">
+                  <div className="book-row-eyebrow">
+                    <span>{sourceLabel(b.source)}</span>
                     {b.level && (
-                      <span className={`cefr-badge cefr-${b.level.toLowerCase()}`}>
-                        {b.level}
-                      </span>
+                      <>
+                        <span>·</span>
+                        <span>{b.level}</span>
+                      </>
                     )}
-                  </div>
-
-                  <div className="book-card-icon-actions">
-                    <button
-                      type="button"
-                      className={`book-star-btn ${b.favorite ? 'active' : ''}`}
-                      onClick={(e) => handleToggleFavorite(e, b)}
-                      title={
-                        b.favorite ? 'Убрать из избранного' : 'В избранное'
-                      }
-                    >
-                      <Star
-                        size={15}
-                        fill={b.favorite ? 'currentColor' : 'none'}
-                      />
-                    </button>
-                    <button
-                      type="button"
-                      className="book-delete-btn"
-                      onClick={(e) => handleDeleteBook(e, b.id, b.title)}
-                      title="Удалить книгу"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
-                </div>
-
-                <h3 className="book-card-title">{b.title}</h3>
-                {b.titleRu && <p className="book-card-title-ru">{b.titleRu}</p>}
-                {b.author && <p className="book-card-author">{b.author}</p>}
-
-                {b.targetWords && b.targetWords.length > 0 && (
-                  <div className="book-card-words">
-                    {b.targetWords.slice(0, 5).map((w) => (
-                      <span key={w} className="mini-word-tag">
-                        {w}
-                      </span>
-                    ))}
-                    {b.targetWords.length > 5 && (
-                      <span className="mini-word-tag">
-                        +{b.targetWords.length - 5}
-                      </span>
+                    {b.genre && (
+                      <>
+                        <span>·</span>
+                        <span>{b.genre}</span>
+                      </>
                     )}
-                  </div>
-                )}
-
-                <div className="book-card-footer">
-                  <div className="progress-bar-track">
-                    <div
-                      className="progress-bar-fill"
-                      style={{
-                        width: `${Math.max(4, b.progressPercent || 0)}%`,
-                        backgroundColor: b.coverColor || '#1e293b',
-                      }}
-                    />
-                  </div>
-                  <div className="progress-meta-row">
+                    <span>·</span>
                     <span>
                       {b.totalChapters > 1
-                        ? `Глава ${b.currentChapterIndex + 1}/${b.totalChapters}`
+                        ? `Гл. ${b.currentChapterIndex + 1}/${b.totalChapters}`
                         : `${b.totalParagraphs} абз.`}
                     </span>
-                    <span>
-                      {b.progressPercent > 0 ? `${b.progressPercent}%` : 'Читать →'}
-                    </span>
                   </div>
+
+                  <strong lang="et">{b.title}</strong>
+                  {b.titleRu && <span>{b.titleRu}</span>}
+
+                  {b.targetWords && b.targetWords.length > 0 && (
+                    <div className="book-row-words" lang="et">
+                      {b.targetWords.slice(0, 7).join(' · ')}
+                    </div>
+                  )}
                 </div>
+
+                <div className="book-row-side">
+                  {b.progressPercent > 0 && (
+                    <span className="book-row-progress">
+                      {b.progressPercent}%
+                    </span>
+                  )}
+                  <ArrowRight size={17} className="row-arrow" />
+                </div>
+              </button>
+
+              <div className="book-row-actions">
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={(e) => handleDeleteBook(e, b.id, b.title)}
+                  title="Удалить"
+                  aria-label={`Удалить ${b.title}`}
+                >
+                  <Trash2 size={17} />
+                </button>
               </div>
-            </div>
+            </article>
           ))}
         </div>
       )}
 
-      {/* Paste Custom Estonian Text Modal */}
       {showPasteModal && (
         <div
-          className="popover-backdrop"
+          className="modal-backdrop"
           onClick={() => setShowPasteModal(false)}
         >
           <div
-            className="paste-modal-card"
+            className="modal-card"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="popover-header">
-              <h2>Вставить свой текст или статью на эстонском</h2>
+            <div className="modal-header">
+              <h2>Вставить текст</h2>
               <button
                 type="button"
-                className="icon-btn-close"
+                className="icon-button"
                 onClick={() => setShowPasteModal(false)}
               >
-                <X size={20} />
+                <X size={19} />
               </button>
             </div>
 
-            <form onSubmit={handleSavePastedText} className="paste-modal-form">
-              <div className="field-block">
-                <label className="field-label">Заголовок (необязательно):</label>
-                <input
-                  type="text"
-                  className="input-text"
-                  value={pasteTitle}
-                  onChange={(e) => setPasteTitle(e.target.value)}
-                  placeholder="Напр.: Статья из Postimees / ERR..."
-                />
-              </div>
+            <form onSubmit={handleSavePastedText} className="form-card clean-form">
+              <label htmlFor="paste-title">Заголовок</label>
+              <input
+                id="paste-title"
+                type="text"
+                value={pasteTitle}
+                onChange={(e) => setPasteTitle(e.target.value)}
+                placeholder="Название статьи или заметки"
+              />
 
-              <div className="field-block">
-                <label className="field-label">Текст на эстонском языке:</label>
-                <textarea
-                  className="input-textarea"
-                  rows={9}
-                  value={pasteContent}
-                  onChange={(e) => setPasteContent(e.target.value)}
-                  placeholder="Вставьте сюда любой эстонский текст, новость, письмо или диалог..."
-                  required
-                />
-              </div>
+              <label htmlFor="paste-body">Текст на эстонском</label>
+              <textarea
+                id="paste-body"
+                rows={8}
+                value={pasteContent}
+                onChange={(e) => setPasteContent(e.target.value)}
+                placeholder="Вставьте эстонский текст..."
+                required
+              />
 
-              <div className="paste-modal-actions">
+              <div className="form-actions">
+                <button type="submit" className="primary">
+                  Открыть
+                </button>
                 <button
                   type="button"
-                  className="btn-outline"
+                  className="secondary"
                   onClick={() => setShowPasteModal(false)}
                 >
                   Отмена
-                </button>
-                <button type="submit" className="btn-hero-primary">
-                  <BookOpen size={18} />
-                  <span>Открыть в режиме «Билингва»</span>
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 };

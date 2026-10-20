@@ -1,30 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import {
-  BookmarkPlus,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
+  Check,
   Inbox,
   Loader2,
+  Plus,
   Volume2,
   X,
 } from 'lucide-react';
+import { db, type AppSettings } from '../db';
 import {
-  directRussian,
+  cleanWordToken,
   normalize,
-  partsOfSpeech,
   type PartOfSpeech,
 } from '../dictionary/sonapi';
-import { getEkiCefr, type CefrLevel } from '../dictionary/ekiCefr';
-import { translateWithTartuNlp } from '../dictionary/tartunlp';
+import { getEkiCefr } from '../dictionary/ekiCefr';
+import { explainWordInContextWithAi } from '../aiClient';
 import {
   lookupEstonianWord,
   SonadClient,
   type SonadCompanionWord,
-  type SonadFolder,
   type SonadLookupCandidate,
 } from '../sonadClient';
-import { db, type AppSettings } from '../db';
 
 interface WordPopoverProps {
   clickedWord: string;
@@ -32,8 +28,20 @@ interface WordPopoverProps {
   localWords: SonadCompanionWord[];
   settings: AppSettings;
   onClose: () => void;
-  onWordSaved?: (word: SonadCompanionWord) => void;
 }
+
+const POS_LABELS: Record<string, string> = {
+  noun: 'СУЩЕСТВИТЕЛЬНОЕ',
+  verb: 'ГЛАГОЛ',
+  adjective: 'ПРИЛАГАТЕЛЬНОЕ',
+  adverb: 'НАРЕЧИЕ',
+  pronoun: 'МЕСТОИМЕНИЕ',
+  numeral: 'ЧИСЛИТЕЛЬНОЕ',
+  conjunction: 'СОЮЗ',
+  adposition: 'ПРЕДЛОГ / ПОСЛЕЛОГ',
+  phrase: 'ВЫРАЖЕНИЕ',
+  other: 'СЛОВО',
+};
 
 export const WordPopover: React.FC<WordPopoverProps> = ({
   clickedWord,
@@ -41,13 +49,13 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
   localWords,
   settings,
   onClose,
-  onWordSaved,
 }) => {
+  const cleanSurface = cleanWordToken(clickedWord);
+
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<SonadLookupCandidate[]>([]);
-  const [selectedCandidateIdx, setSelectedCandidateIdx] = useState(0);
-  const [selectedMeaningIdx, setSelectedMeaningIdx] = useState(0);
+  const [selectedCandidateIndex, setSelectedCandidateIndex] = useState(0);
+  const [selectedMeaningIndex, setSelectedMeaningIndex] = useState(0);
   const [existingWord, setExistingWord] = useState<{
     id: string;
     lemma: string;
@@ -56,24 +64,22 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
     status?: 'sonavara' | 'recalled' | 'new';
   } | null>(null);
 
-  const [customLemma, setCustomLemma] = useState('');
+  const [customLemma, setCustomLemma] = useState(cleanSurface);
   const [customTranslation, setCustomTranslation] = useState('');
+  const [customForms, setCustomForms] = useState('');
   const [selectedFolderId, setSelectedFolderId] = useState<string>('');
-  const [showParadigm, setShowParadigm] = useState(false);
 
-  const [savingWord, setSavingWord] = useState(false);
-  const [savingInbox, setSavingInbox] = useState(false);
-  const [actionMessage, setActionMessage] = useState<{
-    type: 'success' | 'info' | 'error';
-    text: string;
-  } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiGrammarNote, setAiGrammarNote] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    setError(null);
     setActionMessage(null);
-    setShowParadigm(false);
+    setAiGrammarNote(null);
 
     lookupEstonianWord(clickedWord, localWords, {
       sonadToken: settings.sonadToken,
@@ -82,125 +88,138 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
     })
       .then((res) => {
         if (controller.signal.aborted) return;
-        setCandidates(res.candidates);
         setExistingWord(res.existingWord);
-        setSelectedCandidateIdx(0);
+        setCandidates(res.candidates);
+        setSelectedCandidateIndex(0);
 
         const firstCandidate = res.candidates[0];
-        const firstMeaningIdx = firstCandidate?.details?.meaningIndex ?? 0;
-        setSelectedMeaningIdx(firstMeaningIdx);
-
-        const resolvedLemma =
-          firstCandidate?.lemma ||
-          res.existingWord?.lemma ||
-          res.query ||
-          clickedWord;
-        setCustomLemma(resolvedLemma);
-
-        const meaning = firstCandidate?.details?.meanings?.[firstMeaningIdx];
-        const ruList = meaning ? directRussian(meaning) : [];
-        const defaultTrans =
-          res.existingWord?.translation || ruList.slice(0, 4).join('; ') || '';
-        setCustomTranslation(defaultTrans);
-        setLoading(false);
-
-        if (!defaultTrans) {
-          translateWithTartuNlp(resolvedLemma, controller.signal).then(
-            (freeRu) => {
-              if (!controller.signal.aborted && freeRu) {
-                setCustomTranslation(freeRu);
-              }
-            },
+        if (firstCandidate) {
+          setCustomLemma(firstCandidate.lemma);
+          setCustomForms(firstCandidate.forms.primary.join(' · '));
+          const mIdx = firstCandidate.details.meaningIndex ?? 0;
+          setSelectedMeaningIndex(mIdx);
+          const m =
+            firstCandidate.details.meanings[mIdx] ??
+            firstCandidate.details.meanings[0];
+          const ruWords = (m?.translations?.rus ?? [])
+            .map((t) => t.words)
+            .filter(Boolean)
+            .slice(0, 3)
+            .join(', ');
+          setCustomTranslation(
+            res.existingWord?.translation || ruWords || m?.definition || '',
           );
+        } else if (res.existingWord) {
+          setCustomLemma(res.existingWord.lemma);
+          setCustomTranslation(res.existingWord.translation);
+          setCustomForms(res.existingWord.forms.primary.join(' · '));
+        } else {
+          setCustomLemma(cleanSurface);
+          setCustomTranslation('');
+          setCustomForms('');
         }
       })
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return;
-        setError(err instanceof Error ? err.message : 'Ошибка поиска слова');
-        setCustomLemma(clickedWord.toLowerCase());
-        setLoading(false);
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setCustomLemma(cleanSurface);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       });
 
     return () => controller.abort();
-  }, [clickedWord, localWords, settings.sonadToken, settings.sonadBaseUrl]);
+  }, [clickedWord, cleanSurface, localWords, settings.sonadToken, settings.sonadBaseUrl]);
 
-  const currentCandidate: SonadLookupCandidate | undefined =
-    candidates[selectedCandidateIdx];
-  const meanings = currentCandidate?.details?.meanings ?? [];
-  const currentMeaning = meanings[selectedMeaningIdx] ?? meanings[0];
+  const currentCandidate = candidates[selectedCandidateIndex] ?? null;
+  const meanings = currentCandidate?.details.meanings ?? [];
+  const currentMeaning =
+    meanings[selectedMeaningIndex] ?? meanings[0] ?? undefined;
 
   const handleSelectCandidate = (idx: number) => {
-    setSelectedCandidateIdx(idx);
+    setSelectedCandidateIndex(idx);
     const cand = candidates[idx];
     if (!cand) return;
-    const mIdx = cand.details.meaningIndex ?? 0;
-    setSelectedMeaningIdx(mIdx);
     setCustomLemma(cand.lemma);
-    const m = cand.details.meanings[mIdx];
-    const ru = m ? directRussian(m).slice(0, 4).join('; ') : '';
-    if (ru) setCustomTranslation(ru);
+    setCustomForms(cand.forms.primary.join(' · '));
+    const mIdx = cand.details.meaningIndex ?? 0;
+    setSelectedMeaningIndex(mIdx);
+    const m = cand.details.meanings[mIdx] ?? cand.details.meanings[0];
+    const ruWords = (m?.translations?.rus ?? [])
+      .map((t) => t.words)
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(', ');
+    setCustomTranslation(ruWords || m?.definition || '');
   };
 
   const handleSelectMeaning = (mIdx: number) => {
-    setSelectedMeaningIdx(mIdx);
+    setSelectedMeaningIndex(mIdx);
     const m = meanings[mIdx];
     if (!m) return;
-    const ru = directRussian(m).slice(0, 4).join('; ');
-    if (ru) setCustomTranslation(ru);
+    const ruWords = (m.translations?.rus ?? [])
+      .map((t) => t.words)
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(', ');
+    if (ruWords) {
+      setCustomTranslation(ruWords);
+    } else if (m.definition) {
+      setCustomTranslation(m.definition);
+    }
   };
 
-  const speakEstonian = (textToSpeak: string) => {
+  const speakEstonian = (text: string) => {
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(textToSpeak);
-    utterance.lang = 'et-EE';
-    utterance.rate = 0.92;
-    window.speechSynthesis.speak(utterance);
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'et-EE';
+    u.rate = 0.9;
+    window.speechSynthesis.speak(u);
   };
 
-  const effectiveLemma = (
-    customLemma ||
-    currentCandidate?.lemma ||
-    clickedWord
-  ).trim();
-  const effectiveLevel: string | null =
-    currentCandidate?.level ?? getEkiCefr(effectiveLemma) ?? null;
-  const effectivePos = (currentMeaning?.partOfSpeech ??
-    'unknown') as PartOfSpeech;
-  const primaryForms =
-    currentCandidate?.forms?.primary?.filter(Boolean) ??
-    existingWord?.forms?.primary?.filter(Boolean) ?? [effectiveLemma];
-
-  const matchedLocalWord =
-    localWords.find((w) => normalize(w.lemma) === normalize(effectiveLemma)) ??
-    (existingWord
-      ? localWords.find((w) => w.id === existingWord.id)
-      : undefined);
-
-  const isAlreadySaved = Boolean(
-    matchedLocalWord || existingWord || currentCandidate?.alreadyInSonad,
-  );
-
-  const statusLabel = (status?: 'sonavara' | 'recalled' | 'new') => {
-    if (status === 'sonavara') return 'Уже в Sõnad · Sõnavara (Выучено)';
-    if (status === 'recalled') return 'Уже в Sõnad · Õpin (Учу сейчас)';
-    if (status === 'new') return 'Уже в Sõnad · Õpin (Новое)';
-    return 'Уже в вашем словаре Sõnad';
+  const handleAiExplainWord = async () => {
+    setAiLoading(true);
+    try {
+      const res = await explainWordInContextWithAi(
+        clickedWord,
+        sentenceContext || clickedWord,
+      );
+      setCustomLemma(res.lemma || customLemma);
+      if (!customTranslation) setCustomTranslation(res.translation);
+      if (!customForms && res.forms.length > 0) {
+        setCustomForms(res.forms.join(' · '));
+      }
+      setAiGrammarNote(res.grammarExplanation);
+    } catch (err: unknown) {
+      setActionMessage(
+        err instanceof Error ? err.message : 'Ошибка ИИ-разбора.',
+      );
+    } finally {
+      setAiLoading(false);
+    }
   };
 
-  const handleAddWord = async () => {
-    const lemma = effectiveLemma;
+  const handleSaveToSonad = async () => {
+    const lemma = customLemma.trim() || cleanSurface;
     const translation = customTranslation.trim();
-    if (!lemma || !translation) {
-      setActionMessage({
-        type: 'error',
-        text: 'Укажите перевод слова перед сохранением.',
-      });
+    if (!translation) {
+      setActionMessage('Укажите русский перевод.');
       return;
     }
 
-    setSavingWord(true);
+    setSaving(true);
     setActionMessage(null);
+
+    const primaryForms = customForms
+      .split(/[·,;]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const effectivePos: PartOfSpeech | string =
+      currentMeaning?.partOfSpeech ?? 'other';
 
     try {
       let savedWord: SonadCompanionWord;
@@ -214,25 +233,16 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
           lemma,
           translation,
           partOfSpeech: effectivePos,
-          forms: { primary: primaryForms },
+          forms:
+            primaryForms.length > 0 ? { primary: primaryForms } : undefined,
           notes: sentenceContext
-            ? `Из книги: «${sentenceContext.slice(0, 180)}»`
-            : '',
+            ? `Из текста: «${sentenceContext.slice(0, 180)}»`
+            : undefined,
           folderId: selectedFolderId || undefined,
         });
-        savedWord = {
-          ...res.word,
-          status: res.word.status ?? 'new',
-          level: (res.word.level as CefrLevel | null) ?? getEkiCefr(lemma),
-        };
+        savedWord = res.word;
         await db.sonadWords.put(savedWord);
-        setActionMessage({
-          type: 'success',
-          text:
-            res.status === 'existing'
-              ? `Слово «${lemma}» уже было в Sõnad — данные синхронизированы!`
-              : `Слово «${lemma}» добавлено в Sõnad (Õpin)!`,
-        });
+        setActionMessage('Сохранено в Sõnad');
       } else {
         savedWord = {
           id: `local-${normalize(lemma)}`,
@@ -245,7 +255,7 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
           },
           formsNotApplicable: false,
           notes: sentenceContext
-            ? `Из книги: «${sentenceContext.slice(0, 180)}»`
+            ? `Из текста: «${sentenceContext.slice(0, 180)}»`
             : '',
           folderId: selectedFolderId || null,
           level: getEkiCefr(lemma),
@@ -254,10 +264,7 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
           updatedAt: new Date().toISOString(),
         };
         await db.sonadWords.put(savedWord);
-        setActionMessage({
-          type: 'info',
-          text: `Сохранено локально («${lemma}»). Подключите API-ключ Sõnad в настройках для облачной синхронизации.`,
-        });
+        setActionMessage('Сохранено локально');
       }
 
       setExistingWord({
@@ -267,314 +274,224 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
         forms: { primary: savedWord.forms.primary },
         status: savedWord.status,
       });
-      onWordSaved?.(savedWord);
     } catch (err: unknown) {
-      setActionMessage({
-        type: 'error',
-        text:
-          err instanceof Error ? err.message : 'Ошибка при сохранении слова.',
-      });
+      setActionMessage(
+        err instanceof Error ? err.message : 'Не удалось сохранить слово.',
+      );
     } finally {
-      setSavingWord(false);
+      setSaving(false);
     }
   };
 
-  const handleAddToInbox = async () => {
-    const text = effectiveLemma || clickedWord;
+  const handleSendToInbox = async () => {
+    const lemma = customLemma.trim() || cleanSurface;
     if (!settings.sonadToken.trim()) {
-      setActionMessage({
-        type: 'error',
-        text: 'Для отправки в Inbox подключите API-ключ Sõnad в разделе «Настройки».',
-      });
+      setActionMessage('Подключите ключ Sõnad в настройках.');
       return;
     }
 
-    setSavingInbox(true);
-    setActionMessage(null);
+    setSaving(true);
     try {
-      const client = new SonadClient(settings.sonadToken, settings.sonadBaseUrl);
-      await client.addToInbox(text);
-      setActionMessage({
-        type: 'success',
-        text: `«${text}» отправлено во входящие (Inbox) Sõnad!`,
-      });
+      const client = new SonadClient(
+        settings.sonadToken,
+        settings.sonadBaseUrl,
+      );
+      await client.addToInbox(lemma);
+      setActionMessage(`Отправлено в Inbox Sõnad`);
     } catch (err: unknown) {
-      setActionMessage({
-        type: 'error',
-        text:
-          err instanceof Error ? err.message : 'Не удалось отправить в Inbox.',
-      });
+      setActionMessage(
+        err instanceof Error ? err.message : 'Ошибка отправки в Inbox.',
+      );
     } finally {
-      setSavingInbox(false);
+      setSaving(false);
     }
   };
 
-  const folders: SonadFolder[] = settings.sonadFolders ?? [];
+  const posLabel =
+    POS_LABELS[currentMeaning?.partOfSpeech ?? 'other'] ?? 'СЛОВО';
+  const cefr = currentCandidate?.level ?? getEkiCefr(customLemma);
 
   return (
-    <div className="popover-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="word-popover-sheet"
+        className="modal-card word-modal"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
-        aria-label="Словарный разбор слова"
+        aria-modal="true"
       >
-        <div className="popover-drag-handle" />
-
-        <div className="popover-header">
-          <div className="popover-title-group">
-            <div className="popover-word-line">
-              {normalize(clickedWord) !== normalize(effectiveLemma) && (
-                <>
-                  <span className="clicked-form-chip">{clickedWord}</span>
-                  <span className="lemma-arrow">→</span>
-                </>
-              )}
-              <span className="lemma-title">{effectiveLemma}</span>
-              <button
-                type="button"
-                className="icon-btn-round"
-                onClick={() => speakEstonian(effectiveLemma)}
-                title="Прослушать произношение (et-EE)"
-              >
-                <Volume2 size={18} />
-              </button>
-              {effectiveLevel && (
-                <span
-                  className={`cefr-badge cefr-${effectiveLevel.toLowerCase()}`}
-                >
-                  {effectiveLevel}
-                </span>
-              )}
-              {effectivePos && effectivePos !== 'unknown' && (
-                <span className="pos-badge">
-                  {partsOfSpeech[effectivePos] ?? effectivePos}
-                </span>
-              )}
-            </div>
-
-            {primaryForms.length > 0 && (
-              <div className="primary-forms-row">
-                {primaryForms.join(' · ')}
-              </div>
-            )}
-          </div>
+        <div className="word-modal-top">
+          <span className="eyebrow" style={{ marginBottom: 0 }}>
+            {posLabel}
+            {cefr ? ` · ${cefr}` : ''}
+            {existingWord ? ' · В SÕNAD' : ''}
+          </span>
 
           <button
             type="button"
-            className="icon-btn-close"
+            className="icon-button"
             onClick={onClose}
             aria-label="Закрыть"
           >
-            <X size={20} />
+            <X size={19} />
           </button>
         </div>
 
-        {/* Status banner if already in Sõnad */}
-        {isAlreadySaved && (
-          <div
-            className={`sonad-status-banner ${
-              matchedLocalWord?.status === 'sonavara'
-                ? 'status-sonavara'
-                : 'status-opin'
-            }`}
+        <div className="word-modal-head">
+          <h2 lang="et">{customLemma}</h2>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => speakEstonian(customLemma)}
+            title="Озвучить"
           >
-            <CheckCircle2 size={17} />
-            <div>
-              <strong>
-                {statusLabel(matchedLocalWord?.status ?? existingWord?.status)}
-              </strong>
-              {(matchedLocalWord?.translation || existingWord?.translation) && (
-                <span className="saved-translation-inline">
-                  — {matchedLocalWord?.translation || existingWord?.translation}
-                </span>
-              )}
-            </div>
-          </div>
+            <Volume2 size={19} />
+          </button>
+        </div>
+
+        {cleanSurface.toLowerCase() !== customLemma.toLowerCase() && (
+          <p className="surface-form-note">
+            В тексте: <strong lang="et">{clickedWord}</strong>
+          </p>
         )}
 
         {loading ? (
-          <div className="popover-loading">
-            <Loader2 size={24} className="spin" />
-            <span>Ищем начальную форму и перевод в SONAPI...</span>
+          <div className="loading" style={{ padding: '20px 0' }}>
+            <Loader2 size={18} className="spin" /> Поиск в словаре EKI…
           </div>
-        ) : error ? (
-          <div className="popover-error">{error}</div>
         ) : (
-          <div className="popover-body">
+          <>
             {candidates.length > 1 && (
-              <div className="candidate-tabs">
+              <div className="chip-cloud" style={{ marginBottom: 14 }}>
                 {candidates.map((cand, idx) => (
                   <button
                     key={`${cand.lemma}-${idx}`}
                     type="button"
-                    className={`candidate-tab ${
-                      idx === selectedCandidateIdx ? 'active' : ''
+                    className={`choice-chip ${
+                      idx === selectedCandidateIndex ? 'selected' : ''
                     }`}
                     onClick={() => handleSelectCandidate(idx)}
                   >
                     {cand.lemma}
-                    {cand.forms.primary.length > 0
-                      ? ` (${cand.forms.primary.slice(0, 2).join(', ')})`
-                      : ''}
                   </button>
                 ))}
               </div>
             )}
 
-            {meanings.length > 0 ? (
-              <div className="meanings-list">
-                {meanings.slice(0, 4).map((m, idx) => {
-                  const ruWords = directRussian(m);
-                  const isSelected = idx === selectedMeaningIdx;
-                  return (
-                    <div
-                      key={idx}
-                      className={`meaning-card ${isSelected ? 'selected' : ''}`}
-                      onClick={() => handleSelectMeaning(idx)}
-                    >
-                      <div className="meaning-ru">
-                        <span className="meaning-index">{idx + 1}.</span>
-                        <strong>
-                          {ruWords.length > 0
-                            ? ruWords.join(', ')
-                            : 'Перевод не указан (см. толкование)'}
-                        </strong>
-                      </div>
-                      {m.definition && (
-                        <div className="meaning-def">{m.definition}</div>
-                      )}
-                      {m.examples.length > 0 && (
-                        <div className="meaning-example">
-                          «{m.examples[0]}»
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="empty-sonapi-note">
-                В словаре SONAPI точная статья не найдена. Перевод подставлен автоматически — при желании отредактируйте его ниже.
+            {customForms && (
+              <div className="word-forms-box">
+                <span className="eyebrow">ОСНОВНЫЕ ФОРМЫ</span>
+                <p lang="et">{customForms}</p>
               </div>
             )}
 
-            {currentCandidate?.forms?.paradigm &&
-              currentCandidate.forms.paradigm.length > 0 && (
-                <div className="paradigm-section">
-                  <button
-                    type="button"
-                    className="paradigm-toggle"
-                    onClick={() => setShowParadigm((v) => !v)}
-                  >
-                    <span>
-                      Все падежные / личные формы (
-                      {currentCandidate.forms.paradigm.length})
-                    </span>
-                    {showParadigm ? (
-                      <ChevronUp size={16} />
-                    ) : (
-                      <ChevronDown size={16} />
-                    )}
-                  </button>
-                  {showParadigm && (
-                    <div className="paradigm-grid">
-                      {currentCandidate.forms.paradigm
-                        .slice(0, 28)
-                        .map((f, i) => (
-                          <div key={i} className="paradigm-cell">
-                            <span className="paradigm-label">
-                              {f.label || f.code}
-                            </span>
-                            <span className="paradigm-val">{f.value}</span>
-                          </div>
-                        ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-            <div className="save-word-editor">
-              <div className="editor-row">
-                <div className="editor-field">
-                  <label>Лемма (начальная форма)</label>
-                  <input
-                    type="text"
-                    value={customLemma}
-                    onChange={(e) => setCustomLemma(e.target.value)}
-                    placeholder="Напр. otsus"
-                  />
-                </div>
-                <div className="editor-field flex-2">
-                  <label>Перевод на русский (для карточки в Sõnad)</label>
-                  <input
-                    type="text"
-                    value={customTranslation}
-                    onChange={(e) => setCustomTranslation(e.target.value)}
-                    placeholder="Введите русский перевод..."
-                  />
-                </div>
+            {meanings.length > 0 && (
+              <div className="meanings-stack">
+                {meanings.slice(0, 4).map((m, idx) => {
+                  const ruList = (m.translations?.rus ?? [])
+                    .map((t) => t.words)
+                    .filter(Boolean)
+                    .join(', ');
+                  if (!ruList && !m.definition) return null;
+                  const active = idx === selectedMeaningIndex;
+                  return (
+                    <button
+                      key={m.id ?? idx}
+                      type="button"
+                      className={`meaning-row ${active ? 'selected' : ''}`}
+                      onClick={() => handleSelectMeaning(idx)}
+                    >
+                      <strong>{ruList || m.definition}</strong>
+                      {ruList && m.definition && <small>{m.definition}</small>}
+                    </button>
+                  );
+                })}
               </div>
+            )}
 
-              {folders.length > 0 && (
-                <div className="editor-options-row">
-                  <select
-                    className="folder-select"
-                    value={selectedFolderId}
-                    onChange={(e) => setSelectedFolderId(e.target.value)}
-                  >
-                    <option value="">Без папки (общий словарь)</option>
-                    {folders.map((f) => (
-                      <option key={f.id} value={f.id}>
-                        📁 {f.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+            {aiGrammarNote ? (
+              <div className="grammar-note" style={{ marginBottom: 16 }}>
+                <p>{aiGrammarNote}</p>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="text-button"
+                onClick={handleAiExplainWord}
+                disabled={aiLoading}
+                style={{ marginBottom: 12 }}
+              >
+                {aiLoading ? (
+                  <>
+                    <Loader2 size={14} className="spin" />
+                    <span>Разбор формы…</span>
+                  </>
+                ) : (
+                  <span>Разобрать грамматическую форму через AI →</span>
+                )}
+              </button>
+            )}
+
+            <div className="word-save-fields">
+              <input
+                type="text"
+                value={customTranslation}
+                onChange={(e) => setCustomTranslation(e.target.value)}
+                placeholder="Перевод на русский"
+              />
+
+              {settings.sonadFolders.length > 0 && (
+                <select
+                  value={selectedFolderId}
+                  onChange={(e) => setSelectedFolderId(e.target.value)}
+                >
+                  <option value="">Без списка</option>
+                  {settings.sonadFolders.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
               )}
             </div>
 
             {actionMessage && (
-              <div className={`action-feedback action-${actionMessage.type}`}>
-                {actionMessage.text}
-              </div>
+              <div className="status-banner success">{actionMessage}</div>
             )}
 
-            <div className="popover-actions">
+            <div className="form-actions">
               <button
                 type="button"
-                className="btn-primary-add"
-                onClick={handleAddWord}
-                disabled={savingWord}
+                className="primary"
+                style={{ flex: 1 }}
+                onClick={handleSaveToSonad}
+                disabled={saving}
               >
-                {savingWord ? (
-                  <Loader2 size={18} className="spin" />
+                {saving ? (
+                  <Loader2 size={17} className="spin" />
+                ) : existingWord ? (
+                  <Check size={17} />
                 ) : (
-                  <BookmarkPlus size={18} />
+                  <Plus size={17} />
                 )}
                 <span>
-                  {isAlreadySaved
-                    ? 'Обновить / Сохранить в Sõnad'
-                    : '+ Добавить в Sõnad (Õpin)'}
+                  {existingWord ? 'Обновить в Sõnad' : 'Сохранить в Sõnad'}
                 </span>
               </button>
 
-              <button
-                type="button"
-                className="btn-secondary-inbox"
-                onClick={handleAddToInbox}
-                disabled={savingInbox}
-                title="Отправить слово во Входящие (Inbox) Sõnad"
-              >
-                {savingInbox ? (
-                  <Loader2 size={17} className="spin" />
-                ) : (
+              {settings.sonadToken.trim() && (
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={handleSendToInbox}
+                  disabled={saving}
+                  title="В Inbox"
+                >
                   <Inbox size={17} />
-                )}
-                <span>В Inbox</span>
-              </button>
+                  <span>Inbox</span>
+                </button>
+              )}
             </div>
-          </div>
+          </>
         )}
       </div>
     </div>

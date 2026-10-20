@@ -1,17 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  BookCheck,
-  Check,
-  Feather,
-  FolderOpen,
-  GraduationCap,
-  Loader2,
-  RefreshCw,
-  Settings,
-  Sparkles,
-  UserCheck,
-  Wand2,
-} from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
 import {
   db,
   makeParagraphHash,
@@ -40,14 +28,14 @@ interface StoryGeneratorViewProps {
 type WordSourceMode = 'opin' | 'sonavara' | 'folder' | 'manual';
 
 const BASE_GENRES = [
-  { id: 'Уютная повседневность', icon: '☕', label: 'Уютная повседневность' },
-  { id: 'Детектив и тайны', icon: '🕵️', label: 'Детектив и тайны' },
-  { id: 'Юмор и ирония', icon: '😄', label: 'Юмор и ирония' },
-  { id: 'Путешествия по Эстонии', icon: '🚆', label: 'Путешествия по Эстонии' },
-  { id: 'Рабочая ситуация', icon: '💼', label: 'Рабочая ситуация' },
-  { id: 'Магический реализм', icon: '✨', label: 'Магический реализм' },
-  { id: 'Исторические зарисовки', icon: '🏰', label: 'Исторические зарисовки' },
-  { id: 'Своя тема', icon: '✍️', label: 'Своя тема' },
+  'Повседневность',
+  'Детектив',
+  'Ирония',
+  'Путешествия',
+  'Диалог',
+  'История',
+  'Фантастика',
+  'Своя тема',
 ];
 
 const DEFAULT_FALLBACK_WORDS: StoryWordPromptItem[] = [
@@ -78,14 +66,13 @@ export const StoryGeneratorView: React.FC<StoryGeneratorViewProps> = ({
     settings.sonadFolders[0]?.id ?? '',
   );
   const [wordCountTarget, setWordCountTarget] = useState<number>(10);
-  const [useKnownSonavara, setUseKnownSonavara] = useState<boolean>(true);
   const [level, setLevel] = useState<CefrLevel>(
     profile.cefrLevel === 'C1' || profile.cefrLevel === 'C2'
       ? 'B2'
       : profile.cefrLevel || 'A2',
   );
   const [genre, setGenre] = useState<string>(
-    profile.favoriteGenres[0] || 'Уютная повседневность',
+    profile.favoriteGenres[0] || 'Повседневность',
   );
   const [customTopic, setCustomTopic] = useState<string>('');
   const [manualWordsInput, setManualWordsInput] = useState<string>(
@@ -148,25 +135,7 @@ export const StoryGeneratorView: React.FC<StoryGeneratorViewProps> = ({
   }, [sourceMode, selectedFolderId, wordCountTarget, sonadWords.length]);
 
   const availableGenres = useMemo(() => {
-    const map = new Map<
-      string,
-      { id: string; icon: string; label: string; isFav?: boolean }
-    >();
-    for (const fg of profile.favoriteGenres) {
-      const base = BASE_GENRES.find((b) => b.id === fg);
-      map.set(fg, {
-        id: fg,
-        icon: base?.icon ?? '❤️',
-        label: fg,
-        isFav: true,
-      });
-    }
-    for (const b of BASE_GENRES) {
-      if (!map.has(b.id)) {
-        map.set(b.id, b);
-      }
-    }
-    return Array.from(map.values());
+    return Array.from(new Set([...profile.favoriteGenres, ...BASE_GENRES]));
   }, [profile.favoriteGenres]);
 
   const parseManualWords = (): StoryWordPromptItem[] => {
@@ -196,35 +165,28 @@ export const StoryGeneratorView: React.FC<StoryGeneratorViewProps> = ({
       sourceMode === 'manual' ? parseManualWords() : pickedWords;
 
     if (activeTargetWords.length === 0) {
-      setError(
-        'Выберите или введите хотя бы 3 эстонских слова для генерации рассказа.',
-      );
+      setError('Укажите хотя бы 3 слова.');
       return;
     }
 
     if (settings.aiProvider !== 'cloudflare' && !settings.aiApiKey.trim()) {
-      setError(
-        'Укажите ваш API-ключ нейросети (Gemini, OpenAI, Claude, OpenRouter или Groq) в разделе «Настройки» (Seaded) или переключитесь на встроенный Cloudflare AI.',
-      );
+      setError('Вставьте API-ключ в настройках или выберите Cloudflare AI.');
       return;
     }
 
     setGenerating(true);
     try {
-      const knownSample = useKnownSonavara
-        ? sonavaraWords
-            .sort(() => Math.random() - 0.5)
-            .slice(0, 30)
-            .map((w) => w.lemma)
-        : [];
+      const knownSample = sonavaraWords
+        .sort(() => Math.random() - 0.5)
+        .slice(0, 30)
+        .map((w) => w.lemma);
 
       const result = await generateEstonianStory({
         targetWords: activeTargetWords,
         knownWordsSample: knownSample,
         level,
         genre,
-        customTopic:
-          genre === 'Своя тема' ? customTopic : customTopic || undefined,
+        customTopic: customTopic.trim() || undefined,
         paragraphCount: level === 'A1' ? 5 : 6,
         profile,
       });
@@ -237,7 +199,7 @@ export const StoryGeneratorView: React.FC<StoryGeneratorViewProps> = ({
         id: bookId,
         title: result.title,
         titleRu: result.titleRu,
-        author: `AI · Уровень ${level} · ${genre}`,
+        author: `${level} · ${genre}`,
         source: 'ai',
         level,
         genre,
@@ -295,7 +257,7 @@ export const StoryGeneratorView: React.FC<StoryGeneratorViewProps> = ({
       setError(
         err instanceof Error
           ? err.message
-          : 'Ошибка при генерации рассказа. Проверьте API-ключ в настройках.',
+          : 'Не удалось сгенерировать рассказ.',
       );
     } finally {
       setGenerating(false);
@@ -303,362 +265,229 @@ export const StoryGeneratorView: React.FC<StoryGeneratorViewProps> = ({
   };
 
   return (
-    <div className="page-container">
-      <div className="page-heading-row">
+    <section className="narrow">
+      <div className="page-heading">
         <div>
-          <span className="eyebrow">LOO LUGU · ПЕРСОНАЛЬНЫЙ AI-ГЕНЕРАТОР</span>
-          <h1 className="page-title">Создать рассказ со словами Sõnad</h1>
-          <p className="page-subtitle">
-            Генерация рассказа напрямую через API в 1 клик с учётом ваших изучаемых слов и литературных вкусов из профиля
-          </p>
+          <h1>
+            Loo lugu<span className="heading-dot">.</span>
+          </h1>
         </div>
+      </div>
 
+      <div className="tabs lisa-tabs" role="tablist" aria-label="Источник слов">
         <button
           type="button"
-          className="btn-hero-secondary"
-          onClick={onOpenProfile}
+          className={sourceMode === 'opin' ? 'selected' : ''}
+          onClick={() => setSourceMode('opin')}
         >
-          <Feather size={16} />
-          <span>Мои литературные вкусы ({profile.avatar})</span>
+          Õpin <span>{opinWords.length || 10}</span>
+        </button>
+        <button
+          type="button"
+          className={sourceMode === 'sonavara' ? 'selected' : ''}
+          onClick={() => setSourceMode('sonavara')}
+        >
+          Sõnavara <span>{sonavaraWords.length}</span>
+        </button>
+        {settings.sonadFolders.length > 0 && (
+          <button
+            type="button"
+            className={sourceMode === 'folder' ? 'selected' : ''}
+            onClick={() => setSourceMode('folder')}
+          >
+            Список
+          </button>
+        )}
+        <button
+          type="button"
+          className={sourceMode === 'manual' ? 'selected' : ''}
+          onClick={() => setSourceMode('manual')}
+        >
+          Вручную
         </button>
       </div>
 
-      {(!settings.sonadToken.trim() ||
-        (settings.aiProvider !== 'cloudflare' && !settings.aiApiKey.trim())) && (
-        <div className="setup-callout-card">
-          <div className="setup-callout-text">
-            <strong>Подключите API-ключи в настройках (один раз):</strong>
-            <ul>
-              {!settings.sonadToken.trim() && (
-                <li>
-                  Токен <code>Sõnad</code> (<code>sonad_pat_...</code>) для загрузки ваших реальных слов (сейчас используются стартовые слова).
-                </li>
-              )}
-              {settings.aiProvider !== 'cloudflare' && !settings.aiApiKey.trim() && (
-                <li>
-                  API-ключ вашей нейросети (Gemini, OpenAI, Claude, OpenRouter или Groq) для мгновенной генерации рассказов в 1 клик.
-                </li>
-              )}
-            </ul>
+      {error && <div className="error">{error}</div>}
+
+      <div className="form-card">
+        {sourceMode === 'folder' && settings.sonadFolders.length > 0 && (
+          <div className="field-group">
+            <label htmlFor="folder-select">Список из Sõnad</label>
+            <select
+              id="folder-select"
+              value={selectedFolderId}
+              onChange={(e) => setSelectedFolderId(e.target.value)}
+            >
+              {settings.sonadFolders.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
           </div>
-          <button
-            type="button"
-            className="btn-outline"
-            onClick={onOpenSettings}
-          >
-            <Settings size={16} />
-            <span>Открыть настройки</span>
-          </button>
-        </div>
-      )}
+        )}
 
-      <div className="generator-grid">
-        {/* Step 1: Word Source */}
-        <section className="generator-card">
-          <h2 className="card-step-title">
-            <span className="step-num">1</span>
-            Источник слов из словаря Sõnad
-          </h2>
-
-          <div className="source-options-grid">
-            <button
-              type="button"
-              className={`source-option-btn ${sourceMode === 'opin' ? 'active' : ''}`}
-              onClick={() => setSourceMode('opin')}
-            >
-              <GraduationCap size={20} />
-              <div className="source-option-info">
-                <strong>Слова, которые учу (Õpin)</strong>
-                <span>
-                  {opinWords.length > 0
-                    ? `Доступно ${opinWords.length} слов`
-                    : '8–15 актуальных слов для закрепления'}
-                </span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              className={`source-option-btn ${sourceMode === 'sonavara' ? 'active' : ''}`}
-              onClick={() => setSourceMode('sonavara')}
-            >
-              <BookCheck size={20} />
-              <div className="source-option-info">
-                <strong>Выученные слова (Sõnavara)</strong>
-                <span>
-                  {sonavaraWords.length > 0
-                    ? `В запасе ${sonavaraWords.length} слов`
-                    : 'Повторение выученных слов в контексте'}
-                </span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              className={`source-option-btn ${sourceMode === 'folder' ? 'active' : ''}`}
-              onClick={() => setSourceMode('folder')}
-            >
-              <FolderOpen size={20} />
-              <div className="source-option-info">
-                <strong>Папка / Список из Sõnad</strong>
-                <span>
-                  {settings.sonadFolders.length > 0
-                    ? `Папок: ${settings.sonadFolders.length}`
-                    : 'Выберите тематическую папку'}
-                </span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              className={`source-option-btn ${sourceMode === 'manual' ? 'active' : ''}`}
-              onClick={() => setSourceMode('manual')}
-            >
-              <Wand2 size={20} />
-              <div className="source-option-info">
-                <strong>Ввести свои слова</strong>
-                <span>Любой список слов через запятую</span>
-              </div>
-            </button>
-          </div>
-
-          {sourceMode === 'folder' && (
-            <div className="folder-picker-box">
-              {settings.sonadFolders.length > 0 ? (
-                <select
-                  className="input-select"
-                  value={selectedFolderId}
-                  onChange={(e) => setSelectedFolderId(e.target.value)}
-                >
-                  {settings.sonadFolders.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      📁 {f.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <p className="muted-hint">
-                  Папки появятся после синхронизации со словарём Sõnad в настройках.
-                </p>
-              )}
-            </div>
-          )}
-
-          {sourceMode === 'manual' ? (
-            <div className="manual-words-box">
-              <label className="field-label">
-                Введите эстонские слова (можно с переводом в скобках):
-              </label>
-              <textarea
-                className="input-textarea"
-                rows={3}
-                value={manualWordsInput}
-                onChange={(e) => setManualWordsInput(e.target.value)}
-                placeholder="otsus (решение), kohvik (кафе), raamat (книга)..."
-              />
-            </div>
-          ) : (
-            <div className="picked-words-preview">
-              <div className="picked-words-header">
-                <span>
-                  Выбрано слов для рассказа: <strong>{pickedWords.length}</strong>
-                </span>
-                <div className="picked-words-controls">
-                  <select
-                    className="count-select"
-                    value={wordCountTarget}
-                    onChange={(e) => setWordCountTarget(Number(e.target.value))}
-                  >
-                    <option value={8}>8 слов</option>
-                    <option value={10}>10 слов</option>
-                    <option value={12}>12 слов</option>
-                    <option value={15}>15 слов</option>
-                  </select>
-                  <button
-                    type="button"
-                    className="btn-small-ghost"
-                    onClick={() =>
-                      sampleWordsFromPool(poolForCurrentMode, wordCountTarget)
-                    }
-                  >
-                    <RefreshCw size={14} />
-                    <span>Перемешать</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="picked-words-chips">
-                {pickedWords.map((w, idx) => (
-                  <span key={`${w.lemma}-${idx}`} className="picked-word-chip">
-                    <strong>{w.lemma}</strong>
-                    {w.translation && <em> — {w.translation}</em>}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={useKnownSonavara}
-              onChange={(e) => setUseKnownSonavara(e.target.checked)}
+        {sourceMode === 'manual' ? (
+          <div className="field-group">
+            <label htmlFor="manual-words">Слова через запятую</label>
+            <textarea
+              id="manual-words"
+              rows={3}
+              value={manualWordsInput}
+              onChange={(e) => setManualWordsInput(e.target.value)}
+              placeholder="otsus (решение), kohvik (кафе), raamat (книга)"
             />
-            <span>
-              Учитывать уже выученные слова из <strong>Sõnavara</strong> (
-              {sonavaraWords.length}) при построении текста
-            </span>
-          </label>
-        </section>
-
-        {/* Step 2: Profile Taste Summary + CEFR Level & Genre */}
-        <section className="generator-card">
-          <h2 className="card-step-title">
-            <span className="step-num">2</span>
-            Уровень, жанр и ваши литературные предпочтения
-          </h2>
-
-          <div className="profile-context-banner">
-            <div className="profile-context-top">
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={profile.useProfileInAi}
-                  onChange={(e) => {
-                    const next = saveSettings({
-                      profile: {
-                        ...profile,
-                        useProfileInAi: e.target.checked,
-                      },
-                    });
-                    onSettingsChange(next);
-                  }}
-                />
-                <span>
-                  <UserCheck
-                    size={15}
-                    style={{ verticalAlign: 'middle', marginRight: 5 }}
-                  />
-                  <strong>Применять вкусы из моего профиля ({profile.name})</strong>
-                </span>
-              </label>
-
-              <button
-                type="button"
-                className="btn-small-ghost"
-                onClick={onOpenProfile}
-              >
-                Настроить профиль →
-              </button>
+          </div>
+        ) : (
+          <div className="field-group">
+            <div className="label-row">
+              <label>Слова для текста ({pickedWords.length})</label>
+              <div className="inline-controls">
+                <div className="mini-segmented">
+                  {[8, 10, 12, 15].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={wordCountTarget === n ? 'selected' : ''}
+                      onClick={() => setWordCountTarget(n)}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() =>
+                    sampleWordsFromPool(poolForCurrentMode, wordCountTarget)
+                  }
+                >
+                  <RefreshCw size={14} />
+                  <span>Обновить</span>
+                </button>
+              </div>
             </div>
 
-            {profile.useProfileInAi && (
-              <div className="profile-context-details">
-                {profile.favoriteAuthors.length > 0 && (
-                  <span>
-                    <strong>Ориентиры стиля:</strong>{' '}
-                    {profile.favoriteAuthors.slice(0, 3).join(', ')}
-                  </span>
-                )}
-                {profile.favoriteTopics.length > 0 && (
-                  <span>
-                    <strong>Любимые темы:</strong>{' '}
-                    {profile.favoriteTopics.slice(0, 4).join(', ')}
-                  </span>
-                )}
-                {profile.recurringCharacters && (
-                  <span>
-                    <strong>Постоянные герои:</strong>{' '}
-                    {profile.recurringCharacters}
-                  </span>
-                )}
+            <div className="chip-cloud">
+              {pickedWords.map((w, idx) => (
+                <span key={`${w.lemma}-${idx}`} className="word-chip" lang="et">
+                  <strong>{w.lemma}</strong>
+                  {w.translation && <span>{w.translation}</span>}
+                </span>
+              ))}
+            </div>
+
+            {!settings.sonadToken.trim() && (
+              <div className="quiet-note">
+                Используется стартовый набор.{' '}
+                <button
+                  type="button"
+                  className="inline-link"
+                  onClick={onOpenSettings}
+                >
+                  Подключить Sõnad →
+                </button>
               </div>
             )}
           </div>
+        )}
 
-          <div className="field-block">
-            <label className="field-label">Уровень эстонского языка (CEFR):</label>
-            <div className="cefr-selector-grid">
-              {(
-                [
-                  { id: 'A1', desc: 'Простые фразы и настоящее время' },
-                  { id: 'A2', desc: 'Повседневная лексика и базовые падежи' },
-                  { id: 'B1', desc: 'Связный сюжет и живые диалоги' },
-                  { id: 'B2', desc: 'Богатый язык и сложные конструкции' },
-                ] as { id: CefrLevel; desc: string }[]
-              ).map((lvl) => (
-                <button
-                  key={lvl.id}
-                  type="button"
-                  className={`cefr-option-card ${level === lvl.id ? 'active' : ''}`}
-                  onClick={() => setLevel(lvl.id)}
-                >
-                  <div className="cefr-option-top">
-                    <span className={`cefr-badge cefr-${lvl.id.toLowerCase()}`}>
-                      {lvl.id}
-                    </span>
-                    {level === lvl.id && <Check size={16} />}
-                  </div>
-                  <span className="cefr-option-desc">{lvl.desc}</span>
-                </button>
-              ))}
+        <div className="field-group">
+          <label>Уровень языка</label>
+          <div className="segmented-bar">
+            {(['A1', 'A2', 'B1', 'B2'] as CefrLevel[]).map((lvl) => (
+              <button
+                key={lvl}
+                type="button"
+                className={level === lvl ? 'selected' : ''}
+                onClick={() => setLevel(lvl)}
+              >
+                {lvl}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="field-group">
+          <label>Жанр</label>
+          <div className="chip-cloud">
+            {availableGenres.map((g) => (
+              <button
+                key={g}
+                type="button"
+                className={`choice-chip ${genre === g ? 'selected' : ''}`}
+                onClick={() => setGenre(g)}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="field-group">
+          <label htmlFor="custom-topic">Детали сюжета (необязательно)</label>
+          <input
+            id="custom-topic"
+            type="text"
+            value={customTopic}
+            onChange={(e) => setCustomTopic(e.target.value)}
+            placeholder="Например: действие в Тарту зимой, разговор в кафе"
+          />
+        </div>
+
+        <div className="switch-row">
+          <button
+            type="button"
+            className={`raske-control ${profile.useProfileInAi ? 'selected' : ''}`}
+            onClick={() => {
+              const next = saveSettings({
+                profile: {
+                  ...profile,
+                  useProfileInAi: !profile.useProfileInAi,
+                },
+              });
+              onSettingsChange(next);
+            }}
+          >
+            <div>
+              <strong>Учитывать предпочтения из профиля</strong>
+              <small>
+                {[
+                  ...profile.favoriteAuthors.slice(0, 2),
+                  ...profile.favoriteTopics.slice(0, 2),
+                ].join(' · ') || 'Жанры, авторы и сквозные персонажи'}
+              </small>
             </div>
-          </div>
-
-          <div className="field-block">
-            <label className="field-label">
-              Жанр или ситуация (избранные жанры из профиля идут первыми):
-            </label>
-            <div className="genre-pills-grid">
-              {availableGenres.map((g) => (
-                <button
-                  key={g.id}
-                  type="button"
-                  className={`genre-pill-btn ${genre === g.id ? 'active' : ''}`}
-                  onClick={() => setGenre(g.id)}
-                >
-                  <span>{g.icon}</span>
-                  <span>{g.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="field-block">
-            <label className="field-label">
-              Дополнительное пожелание к сюжету этого рассказа (необязательно):
-            </label>
-            <input
-              type="text"
-              className="input-text"
-              value={customTopic}
-              onChange={(e) => setCustomTopic(e.target.value)}
-              placeholder="Напр.: действие происходит в Тарту зимой, герои обсуждают поездку на Сааремаа..."
-            />
-          </div>
-
-          {error && <div className="generator-error-banner">{error}</div>}
+            <span className="switch" />
+          </button>
 
           <button
             type="button"
-            className="btn-generate-story"
+            className="text-button"
+            onClick={onOpenProfile}
+          >
+            Изменить профиль →
+          </button>
+        </div>
+
+        <div className="form-actions">
+          <button
+            type="button"
+            className="primary full-width"
             onClick={handleGenerate}
             disabled={generating}
           >
             {generating ? (
               <>
-                <Loader2 size={20} className="spin" />
-                <span>Пишем рассказ на эстонском и переводим по абзацам...</span>
+                <Loader2 size={18} className="spin" />
+                <span>Генерация текста…</span>
               </>
             ) : (
-              <>
-                <Sparkles size={20} />
-                <span>Сгенерировать рассказ ({level}) и открыть в «Билингва»</span>
-              </>
+              <span>Создать рассказ ({level})</span>
             )}
           </button>
-        </section>
+        </div>
       </div>
-    </div>
+    </section>
   );
 };
