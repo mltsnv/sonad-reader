@@ -14,7 +14,7 @@ import {
   type PartOfSpeech,
 } from '../dictionary/sonapi';
 import { getEkiCefr } from '../dictionary/ekiCefr';
-import { explainWordInContextWithAi } from '../aiClient';
+import { explainParagraphGrammar } from '../aiClient';
 import {
   lookupEstonianWord,
   SonadClient,
@@ -183,16 +183,12 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
   const handleAiExplainWord = async () => {
     setAiLoading(true);
     try {
-      const res = await explainWordInContextWithAi(
-        clickedWord,
-        sentenceContext || clickedWord,
+      const note = await explainParagraphGrammar(
+        sentenceContext
+          ? `Слово «${clickedWord}» в предложении: ${sentenceContext}`
+          : clickedWord,
       );
-      setCustomLemma(res.lemma || customLemma);
-      if (!customTranslation) setCustomTranslation(res.translation);
-      if (!customForms && res.forms.length > 0) {
-        setCustomForms(res.forms.join(' · '));
-      }
-      setAiGrammarNote(res.grammarExplanation);
+      setAiGrammarNote(note);
     } catch (err: unknown) {
       setActionMessage(
         err instanceof Error ? err.message : 'Ошибка ИИ-разбора.',

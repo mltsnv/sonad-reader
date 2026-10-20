@@ -16,17 +16,19 @@ import {
 import {
   db,
   makeParagraphHash,
-  recordParagraphRead,
+  recordParagraphsReadToday,
   saveSettings,
   type AppSettings,
   type BookmarkRecord,
+  type BookParagraph,
   type BookRecord,
   type ChapterRecord,
-  type ParagraphItem,
   type ReaderFontFamily,
 } from '../db';
-import { explainParagraphGrammarWithAi } from '../aiClient';
-import { translateParagraphFree } from '../dictionary/tartunlp';
+import {
+  explainParagraphGrammar,
+  translateParagraphText,
+} from '../aiClient';
 import type { SonadCompanionWord } from '../sonadClient';
 import { createVocabularyIndex, tokenizeParagraph } from '../tokenizer';
 import { WordPopover } from './WordPopover';
@@ -56,6 +58,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const [showToc, setShowToc] = useState(false);
   const [showTypography, setShowTypography] = useState(false);
 
+  const [bilingualMode, setBilingualMode] = useState<'parallel' | 'tap'>(
+    'parallel',
+  );
   const [revealedParagraphs, setRevealedParagraphs] = useState<
     Record<string, boolean>
   >({});
@@ -136,7 +141,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       progressPercent,
       lastReadAt: new Date().toISOString(),
     });
-    const updatedSettings = recordParagraphRead(2);
+    const updatedSettings = recordParagraphsReadToday(2);
     onSettingsChange(updatedSettings);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -158,19 +163,19 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     window.speechSynthesis.speak(u);
   };
 
-  const handleToggleTranslation = async (p: ParagraphItem) => {
+  const handleToggleTranslation = async (p: BookParagraph) => {
     const isCurrentlyOpen =
-      settings.bilingualMode === 'parallel'
+      bilingualMode === 'parallel'
         ? !(revealedParagraphs[p.id] === false)
         : Boolean(revealedParagraphs[p.id]);
 
-    if (isCurrentlyOpen && settings.bilingualMode === 'tap') {
+    if (isCurrentlyOpen && bilingualMode === 'tap') {
       setRevealedParagraphs((prev) => ({ ...prev, [p.id]: false }));
       return;
     }
 
     setRevealedParagraphs((prev) => ({ ...prev, [p.id]: true }));
-    const updatedSettings = recordParagraphRead(1);
+    const updatedSettings = recordParagraphsReadToday(1);
     onSettingsChange(updatedSettings);
 
     const existingRu = localTranslations[p.id]?.ru || p.ru;
@@ -178,25 +183,17 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
     setLoadingParagraphId(p.id);
     try {
-      const translated = await translateParagraphFree(p.et);
+      const translated = await translateParagraphText(p.et);
       setLocalTranslations((prev) => ({
         ...prev,
         [p.id]: { ...prev[p.id], ru: translated },
       }));
-
-      await db.paragraphTranslations.put({
-        id: makeParagraphHash(p.et),
-        etText: p.et,
-        ruTranslation: translated,
-        grammarBreakdown: localTranslations[p.id]?.grammar,
-        updatedAt: new Date().toISOString(),
-      });
     } finally {
       setLoadingParagraphId(null);
     }
   };
 
-  const handleGrammarExplain = async (p: ParagraphItem) => {
+  const handleGrammarExplain = async (p: BookParagraph) => {
     if (openGrammarNotes[p.id]) {
       setOpenGrammarNotes((prev) => ({ ...prev, [p.id]: false }));
       return;
@@ -208,22 +205,14 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
     setLoadingGrammarId(p.id);
     try {
-      const res = await explainParagraphGrammarWithAi(p.et);
+      const grammarNote = await explainParagraphGrammar(p.et);
       setLocalTranslations((prev) => ({
         ...prev,
         [p.id]: {
-          ru: prev[p.id]?.ru || res.ru,
-          grammar: res.grammarNote,
+          ...prev[p.id],
+          grammar: grammarNote,
         },
       }));
-
-      await db.paragraphTranslations.put({
-        id: makeParagraphHash(p.et),
-        etText: p.et,
-        ruTranslation: localTranslations[p.id]?.ru || res.ru,
-        grammarBreakdown: res.grammarNote,
-        updatedAt: new Date().toISOString(),
-      });
     } catch (err: unknown) {
       setLocalTranslations((prev) => ({
         ...prev,
@@ -240,7 +229,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     }
   };
 
-  const handleToggleBookmark = async (p: ParagraphItem) => {
+  const handleToggleBookmark = async (p: BookParagraph) => {
     const id = `${book.id}:${chapterIndex}:${p.id}`;
     if (bookmarkedIds.has(p.id)) {
       await db.bookmarks.delete(id);
@@ -277,17 +266,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           <div className="mini-segmented">
             <button
               type="button"
-              className={
-                settings.bilingualMode === 'parallel' ? 'selected' : ''
-              }
-              onClick={() => updateSetting('bilingualMode', 'parallel')}
+              className={bilingualMode === 'parallel' ? 'selected' : ''}
+              onClick={() => setBilingualMode('parallel')}
             >
               Билингва
             </button>
             <button
               type="button"
-              className={settings.bilingualMode === 'tap' ? 'selected' : ''}
-              onClick={() => updateSetting('bilingualMode', 'tap')}
+              className={bilingualMode === 'tap' ? 'selected' : ''}
+              onClick={() => setBilingualMode('tap')}
             >
               По нажатию
             </button>
@@ -433,7 +420,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           const ruText = localTranslations[p.id]?.ru || p.ru;
           const grammarText = localTranslations[p.id]?.grammar || p.grammarNote;
           const showRu =
-            settings.bilingualMode === 'parallel'
+            bilingualMode === 'parallel'
               ? Boolean(ruText) || Boolean(revealedParagraphs[p.id])
               : Boolean(revealedParagraphs[p.id]);
           const showGrammar = Boolean(openGrammarNotes[p.id]);
