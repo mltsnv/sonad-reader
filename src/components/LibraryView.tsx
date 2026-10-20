@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
+  Bookmark,
   BookOpen,
   FileText,
   FolderUp,
@@ -9,10 +10,12 @@ import {
   Sparkles,
   Star,
   Trash2,
+  Volume2,
   X,
 } from 'lucide-react';
 import {
   db,
+  type BookmarkRecord,
   type BookRecord,
   type ChapterRecord,
 } from '../db';
@@ -24,17 +27,23 @@ import {
 
 interface LibraryViewProps {
   books: BookRecord[];
+  bookmarks: BookmarkRecord[];
   onOpenBook: (bookId: string) => void;
+  onOpenBookAtChapter: (bookId: string, chapterIndex: number) => void;
   onGoToGenerator: () => void;
 }
 
 export const LibraryView: React.FC<LibraryViewProps> = ({
   books,
+  bookmarks,
   onOpenBook,
+  onOpenBookAtChapter,
   onGoToGenerator,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [filter, setFilter] = useState<'all' | 'books' | 'ai' | 'favorites'>('all');
+  const [filter, setFilter] = useState<
+    'all' | 'books' | 'ai' | 'favorites' | 'bookmarks'
+  >('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -364,11 +373,85 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           >
             ★ Избранное ({books.filter((b) => b.favorite).length})
           </button>
+          <button
+            type="button"
+            className={filter === 'bookmarks' ? 'active' : ''}
+            onClick={() => setFilter('bookmarks')}
+          >
+            Закладки ({bookmarks.length})
+          </button>
         </div>
       </div>
 
-      {/* Bookshelf Grid */}
-      {filteredBooks.length === 0 ? (
+      {/* Bookshelf Grid or Bookmarks */}
+      {filter === 'bookmarks' ? (
+        bookmarks.length === 0 ? (
+          <div className="empty-library-box">
+            <Bookmark size={42} strokeWidth={1.5} />
+            <h3>Пока нет сохранённых закладок и цитат</h3>
+            <p>
+              Во время чтения книги или рассказа нажмите на значок закладки у любого абзаца, чтобы быстро вернуться к этому месту.
+            </p>
+          </div>
+        ) : (
+          <div className="bookmarks-list">
+            {bookmarks.map((bm) => (
+              <article key={bm.id} className="bookmark-card">
+                <div className="bookmark-card-top">
+                  <button
+                    type="button"
+                    className="bookmark-book-link"
+                    onClick={() =>
+                      onOpenBookAtChapter(bm.bookId, bm.chapterIndex)
+                    }
+                  >
+                    <BookOpen size={15} />
+                    <span>
+                      {bm.bookTitle} · Глава {bm.chapterIndex + 1}
+                    </span>
+                  </button>
+
+                  <div className="bookmark-actions">
+                    <button
+                      type="button"
+                      className="icon-btn-round"
+                      onClick={() => {
+                        if (!('speechSynthesis' in window)) return;
+                        window.speechSynthesis.cancel();
+                        const u = new SpeechSynthesisUtterance(bm.etText);
+                        u.lang = 'et-EE';
+                        u.rate = 0.92;
+                        window.speechSynthesis.speak(u);
+                      }}
+                      title="Озвучить цитату"
+                    >
+                      <Volume2 size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="book-delete-btn"
+                      onClick={() => db.bookmarks.delete(bm.id)}
+                      title="Удалить закладку"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </div>
+
+                <p
+                  className="bookmark-et-text"
+                  onClick={() =>
+                    onOpenBookAtChapter(bm.bookId, bm.chapterIndex)
+                  }
+                >
+                  «{bm.etText}»
+                </p>
+                {bm.ruText && <p className="bookmark-ru-text">{bm.ruText}</p>}
+              </article>
+            ))}
+          </div>
+        )
+      ) : filteredBooks.length === 0 ? (
         <div className="empty-library-box">
           <BookOpen size={42} strokeWidth={1.5} />
           <h3>В этой категории пока нет книг</h3>

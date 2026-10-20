@@ -5,7 +5,6 @@ import {
   BookOpenText,
   ExternalLink,
   Flame,
-  GraduationCap,
   Library,
   Moon,
   Settings as SettingsIcon,
@@ -28,13 +27,11 @@ import { StoryGeneratorView } from './components/StoryGeneratorView';
 import { ReaderView } from './components/ReaderView';
 import { SettingsView } from './components/SettingsView';
 import { ProfileView } from './components/ProfileView';
-import { VocabularyView } from './components/VocabularyView';
 
 export type NavTab =
   | 'library'
   | 'reader'
   | 'generator'
-  | 'vocabulary'
   | 'profile'
   | 'settings';
 
@@ -144,13 +141,6 @@ export const App: React.FC = () => {
       subtitle: 'AI-рассказ',
       icon: Sparkles,
       isAccent: true,
-    },
-    {
-      tab: 'vocabulary',
-      label: 'Sõnavara',
-      subtitle: 'Слова и цитаты',
-      icon: GraduationCap,
-      badge: sonadWords.length > 0 ? sonadWords.length : undefined,
     },
     {
       tab: 'profile',
@@ -264,7 +254,6 @@ export const App: React.FC = () => {
               {activeTab === 'library' && 'RAAMATUD · КНИЖНАЯ ПОЛКА'}
               {activeTab === 'reader' && 'LUGEMINE · РЕЖИМ БИЛИНГВА'}
               {activeTab === 'generator' && 'LOO LUGU · AI-ГЕНЕРАТОР РАССКАЗОВ'}
-              {activeTab === 'vocabulary' && 'SÕNAVARA · СЛОВАРЬ И ЗАКЛАДКИ'}
               {activeTab === 'profile' && 'MINU PROFIIL · ЛИЧНЫЕ ПРЕДПОЧТЕНИЯ'}
               {activeTab === 'settings' && 'SEADED · НАСТРОЙКИ И КЛЮЧИ'}
             </span>
@@ -366,7 +355,9 @@ export const App: React.FC = () => {
           {activeTab === 'library' && (
             <LibraryView
               books={books}
+              bookmarks={bookmarks}
               onOpenBook={handleOpenBook}
+              onOpenBookAtChapter={handleOpenBookAtChapter}
               onGoToGenerator={() => setActiveTab('generator')}
             />
           )}
@@ -409,17 +400,6 @@ export const App: React.FC = () => {
                 </div>
               </div>
             ))}
-
-          {activeTab === 'vocabulary' && (
-            <VocabularyView
-              sonadWords={sonadWords}
-              bookmarks={bookmarks}
-              settings={settings}
-              onOpenBookAtChapter={handleOpenBookAtChapter}
-              onGoToGenerator={() => setActiveTab('generator')}
-              onGoToSettings={() => setActiveTab('settings')}
-            />
-          )}
 
           {activeTab === 'profile' && (
             <ProfileView
